@@ -1,39 +1,20 @@
-const {Client} = require('discord.js');
-
-// Integer des intents calculé en fonction des intents nécessaires
-const intents = 687195286592;
-
-const client = new Client({intents});
-
-
-// Token du bot - Remplace 'TON_TOKEN_ICI' par le token de ton bot
-const token = 'NjI3ODY2MDg0MDc4MjU2MTM0.GHR9Z9.1qgsQlQBuORXOEHsp7-8afnMoYpx0BWGWuf4eE';
-
-// Dictionnaire pour stocker les préférences d'emoji
-let emojiPreferences = {};
-
-client.on('ready', () => {
-    console.log(`Connecté en tant que ${client.user.tag}!`);
+const Discord = require("discord.js");
+const client = new Discord.Client({
+  intents: "60480",
 });
 
+const token = process.env["DISCORD_BOT_SECRET"];
+console.log(token);
 
-client.on('message', message => {
-    // Ignorer les messages du bot lui-même
-    if (message.author.bot) return;
+client.on("ready", () => {
+  console.log("I'm in");
+  console.log(client.user.username);
+});
 
-    // Répondre avec l'emoji personnalisé
-    if (emojiPreferences[message.author.id]) {
-        message.react(emojiPreferences[message.author.id]);
-    }
-
-    // Commande pour définir l'emoji - Exemple: "!setemoji :smile:"
-    if (message.content.startsWith('!setemoji')) {
-        const args = message.content.split(' ');
-        if (args.length === 2) {
-            emojiPreferences[message.author.id] = args[1];
-            message.channel.send(`Emoji pour ${message.author.username} défini sur ${args[1]}`);
-        }
-    }
+client.on("messageCreate", (msg) => {
+  if (msg.author.id != client.user.id) {
+    msg.channel.send(msg.content.split("").reverse().join(""));
+  }
 });
 
 client.login(token);
