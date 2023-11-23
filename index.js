@@ -1,20 +1,35 @@
-const Discord = require("discord.js");
-const client = new Discord.Client({
-  intents: "60480",
-});
+const dotenv = require("dotenv");
 
-const token = process.env["DISCORD_BOT_SECRET"];
+dotenv.config();
+// get token from dotenv
+const token = process.env.DISCORD_BOT_SECRET;
 console.log(token);
 
-client.on("ready", () => {
-  console.log("I'm in");
-  console.log(client.user.username);
-});
+const fs = require("fs");
+const {
+  Client,
+  Collection,
+  GatewayIntentBits,
+  Partials,
+  REST,
+  Routes,
+} = require("discord.js");
 
-client.on("messageCreate", (msg) => {
-  if (msg.author.id != client.user.id) {
-    msg.channel.send(msg.content.split("").reverse().join(""));
-  }
+/**
+ * From v13, specifying the intents is compulsory.
+ * @type {import('./typings').Client}
+ * @description Main Application Client */
+
+// @ts-ignore
+const client = new Client({
+  // Please add all intents you need, more detailed information @ https://ziad87.net/intents/
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
+  partials: [Partials.Channel],
 });
 
 client.login(token);
