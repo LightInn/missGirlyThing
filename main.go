@@ -95,7 +95,7 @@ func main() {
 	<-sc
 
 	log.Println("Shutting down gracefully...")
-	
+
 	// Send goodbye message to last active channel
 	lastChannelMutex.Lock()
 	if lastChannelID != "" {

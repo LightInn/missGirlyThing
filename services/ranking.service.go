@@ -40,7 +40,7 @@ func (s *RankingService) GetWeeklyRankingText(session *discordgo.Session) string
 	})
 
 	ranking := "🏆 **Weekly Offensive Ranking** 🏆\n\n"
-	
+
 	for i, user := range users {
 		if i >= 10 || user.WeeklyOffensive == 0 {
 			break

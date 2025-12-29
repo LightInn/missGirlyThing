@@ -100,7 +100,7 @@ func (s *MessageService) checkBotMention(session *discordgo.Session, message *di
 func (s *MessageService) checkXD(session *discordgo.Session, message *discordgo.MessageCreate) {
 	// Check for "xD" (case insensitive)
 	xdRegex := regexp.MustCompile(`(?i)\bxd\b`)
-	
+
 	if xdRegex.MatchString(message.Content) {
 		log.Printf("xD detected! Replying to message")
 		_, err := session.ChannelMessageSendReply(message.ChannelID, "ca c'est un jolie smiley !", message.Reference())
@@ -120,7 +120,7 @@ func (s *MessageService) checkMDR(session *discordgo.Session, message *discordgo
 
 	// Concatenate last 3 messages into one string
 	combinedMessages := strings.Join(user.LastMessages, " ")
-	
+
 	// Check with regex for MDR variants on the concatenated string
 	// Matches: mdr, MDR, m d r, m dr, md r, mdrrr, mmmdr, etc.
 	// This allows detection across multiple messages like:
@@ -128,14 +128,14 @@ func (s *MessageService) checkMDR(session *discordgo.Session, message *discordgo
 	// Message 2: "d"
 	// Message 3: "r haha"
 	mdrRegex := regexp.MustCompile(`(?i)\bm+\s*d+\s*r+\b`)
-	
+
 	if mdrRegex.MatchString(combinedMessages) {
 		log.Printf("MDR variant detected in combined messages! Replying with 'tg'")
 		_, err := session.ChannelMessageSendReply(message.ChannelID, "tg", message.Reference())
 		if err != nil {
 			log.Printf("Error sending 'tg' reply: %v", err)
 		}
-		
+
 		// Clear the message history to avoid triggering again
 		err = s.dbService.CreateOrUpdateUser(message.Author.ID, func(user *types.UserData) {
 			user.LastMessages = []string{}
