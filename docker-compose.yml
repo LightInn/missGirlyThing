@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  missgirlything:
+    build: .
+    container_name: missgirlything-bot
+    restart: unless-stopped
+    environment:
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - WORD_LIST=${WORD_LIST:-shit,fuck,damn,ass,bitch,idiot,stupid}
+      - GIF_DISPLAY_SECONDS=${GIF_DISPLAY_SECONDS:-3}
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

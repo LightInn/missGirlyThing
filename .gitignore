@@ -1,4 +1,17 @@
-.idea/
-node_modules/
-
+# Environment and data
 .env
+data/
+save.json
+
+# Binaries
+missgirlything
+bot
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Dependencies
+vendor/
