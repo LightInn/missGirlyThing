@@ -54,7 +54,7 @@ func NewCommandHandler(db *services.DBService, rankingService *services.RankingS
 func (h *CommandHandler) RegisterCommands(session *discordgo.Session) error {
 	// Get all guilds the bot is in
 	guilds := session.State.Guilds
-	
+
 	for _, guild := range guilds {
 		for _, cmd := range h.commands {
 			_, err := session.ApplicationCommandCreate(session.State.User.ID, guild.ID, cmd)
@@ -65,7 +65,7 @@ func (h *CommandHandler) RegisterCommands(session *discordgo.Session) error {
 			log.Printf("Registered command '%s' in guild: %s", cmd.Name, guild.Name)
 		}
 	}
-	
+
 	return nil
 }
 

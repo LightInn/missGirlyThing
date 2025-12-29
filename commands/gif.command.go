@@ -21,7 +21,7 @@ func NewGifCommand(db *services.DBService) *GifCommand {
 
 func (c *GifCommand) HandleSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	log.Printf("Processing setgif command")
-	
+
 	// Respond immediately to Discord (ephemeral so only command user sees it)
 	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
@@ -33,9 +33,9 @@ func (c *GifCommand) HandleSlash(s *discordgo.Session, i *discordgo.InteractionC
 		log.Printf("Error responding to interaction: %v", err)
 		return
 	}
-	
+
 	options := i.ApplicationCommandData().Options
-	
+
 	optionMap := make(map[string]*discordgo.ApplicationCommandInteractionDataOption, len(options))
 	for _, opt := range options {
 		optionMap[opt.Name] = opt

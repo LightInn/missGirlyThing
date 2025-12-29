@@ -22,12 +22,12 @@ func NewDBService(filePath string) *DBService {
 			Users: make(map[string]*types.UserData),
 		},
 	}
-	
+
 	// Try to load existing file
 	if err := service.Load(); err != nil {
 		log.Printf("Error loading database: %v", err)
 	}
-	
+
 	// Create the file if it doesn't exist
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		log.Printf("Creating new database file: %s", filePath)
@@ -35,7 +35,7 @@ func NewDBService(filePath string) *DBService {
 			log.Printf("Error creating database file: %v", err)
 		}
 	}
-	
+
 	return service
 }
 
@@ -93,7 +93,7 @@ func (s *DBService) CreateOrUpdateUser(userID string, updateFn func(*types.UserD
 	}
 
 	updateFn(user)
-	
+
 	// Save without acquiring lock (we already have it)
 	data, err := json.MarshalIndent(s.db, "", "  ")
 	if err != nil {
