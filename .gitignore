@@ -15,3 +15,8 @@ bot
 
 # Dependencies
 vendor/
+
+# Direnv
+.direnv/
+.env
+.envrc.local
