@@ -10,13 +10,20 @@ import (
 type CommandHandler struct {
 	gifCommand     *GifCommand
 	rankingCommand *RankingCommand
+	sondageCommand *SondageCommand
+	stepperCommand *StepperCommand
 	commands       []*discordgo.ApplicationCommand
 }
 
-func NewCommandHandler(db *services.DBService, rankingService *services.RankingService) *CommandHandler {
+func NewCommandHandler(db *services.DBService, rankingService *services.RankingService, pollService *services.PollService, stepperService *services.StepperService) *CommandHandler {
+	sondageCommand := NewSondageCommand(pollService)
+	stepperCommand := NewStepperCommand(stepperService, sondageCommand)
+	sondageCommand.OnStepClosed = stepperCommand.AfterStepClosed
 	handler := &CommandHandler{
 		gifCommand:     NewGifCommand(db),
 		rankingCommand: NewRankingCommand(rankingService),
+		sondageCommand: sondageCommand,
+		stepperCommand: stepperCommand,
 	}
 
 	handler.commands = []*discordgo.ApplicationCommand{
@@ -46,6 +53,8 @@ func NewCommandHandler(db *services.DBService, rankingService *services.RankingS
 			Name:        "ranking",
 			Description: "Display the weekly offensive language ranking",
 		},
+		SondageDefinition(),
+		StepperDefinition(),
 	}
 
 	return handler
@@ -70,6 +79,23 @@ func (h *CommandHandler) RegisterCommands(session *discordgo.Session) error {
 }
 
 func (h *CommandHandler) HandleSlashCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	switch i.Type {
+	case discordgo.InteractionMessageComponent:
+		if h.sondageCommand.HandleComponent(s, i) {
+			return
+		}
+		if h.stepperCommand.HandleComponent(s, i) {
+			return
+		}
+		log.Printf("Unhandled component: %s", i.MessageComponentData().CustomID)
+		return
+	case discordgo.InteractionModalSubmit:
+		if h.sondageCommand.HandleModal(s, i) {
+			return
+		}
+		log.Printf("Unhandled modal: %s", i.ModalSubmitData().CustomID)
+		return
+	}
 	log.Printf("Slash command received: %s", i.ApplicationCommandData().Name)
 	switch i.ApplicationCommandData().Name {
 	case "ping":
@@ -83,5 +109,9 @@ func (h *CommandHandler) HandleSlashCommand(s *discordgo.Session, i *discordgo.I
 		h.gifCommand.HandleSlash(s, i)
 	case "ranking":
 		h.rankingCommand.HandleSlash(s, i)
+	case "sondage":
+		h.sondageCommand.HandleSlash(s, i)
+	case "sondage_stepper":
+		h.stepperCommand.HandleSlash(s, i)
 	}
 }

@@ -26,6 +26,8 @@ func main() {
 	dbService := services.NewDBService("data/save.json")
 	messageService := services.NewMessageService(dbService, cfg)
 	rankingService := services.NewRankingService(dbService)
+	pollService := services.NewPollService()
+	stepperService := services.NewStepperService(pollService)
 
 	// Create Discord session
 	discord, err := discordgo.New("Bot " + cfg.DiscordToken)
@@ -34,7 +36,7 @@ func main() {
 	}
 
 	// Initialize command handler with Discord session
-	commandHandler := commands.NewCommandHandler(dbService, rankingService)
+	commandHandler := commands.NewCommandHandler(dbService, rankingService, pollService, stepperService)
 
 	// Track last active channel
 	var lastChannelID string
