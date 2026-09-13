@@ -149,7 +149,8 @@ func (c *StepperCommand) HandleSlash(s *discordgo.Session, i *discordgo.Interact
 		if si != "" {
 			cond, errMsg := parseStepCond(si, step)
 			if errMsg != "" {
-				ephemeral(s, i, fmt.Sprintf("❌ Étape %d : %s", step, errMsg))
+				log.Printf("stepper: condition rejetée étape %d: si=%q (%s)", step, si, errMsg)
+				ephemeral(s, i, fmt.Sprintf("❌ Étape %d : condition reçue « %s » refusée : %s", step, truncate(si, 40), errMsg))
 				return
 			}
 			def.Cond = cond
@@ -193,13 +194,26 @@ func (c *StepperCommand) HandleSlash(s *discordgo.Session, i *discordgo.Interact
 
 // parseStepCond lit "2=Minecraft" : étape de référence 1-based < step,
 // valeur = nom d'option ou numéro d'option.
+// Tolérant : accepte aussi le = pleine chasse et ignore tout ce qui
+// n'est pas un chiffre à gauche (copier-coller avec "étape 2",
+// espaces insécables ou caractères invisibles).
 func parseStepCond(raw string, step int) (services.StepCondition, string) {
-	parts := strings.SplitN(raw, "=", 2)
-	if len(parts) != 2 {
-		return services.StepCondition{}, "condition invalide, format attendu : 2=Minecraft (n° d'étape = option gagnante)."
+	sep := "="
+	if !strings.Contains(raw, "=") && strings.Contains(raw, "＝") {
+		sep = "＝"
 	}
-	n, err := strconv.Atoi(strings.TrimSpace(parts[0]))
-	if err != nil || n < 1 || n >= step {
+	parts := strings.SplitN(raw, sep, 2)
+	if len(parts) != 2 {
+		return services.StepCondition{}, "format attendu : 2=Minecraft (n° d'étape = option gagnante)."
+	}
+	digits := ""
+	for _, r := range parts[0] {
+		if r >= '0' && r <= '9' {
+			digits += string(r)
+		}
+	}
+	n, err := strconv.Atoi(digits)
+	if digits == "" || err != nil || n < 1 || n >= step {
 		return services.StepCondition{}, fmt.Sprintf("la condition doit référencer une étape précédente (1 à %d).", step-1)
 	}
 	val := strings.TrimSpace(parts[1])
@@ -265,6 +279,15 @@ func (c *StepperCommand) HandleComponent(s *discordgo.Session, i *discordgo.Inte
 	}
 	ephemeral(s, i, "⏹️ Suite annulée. L'étape en cours reste votable mais n'enchaînera plus rien.")
 	return true
+}
+
+// ---------- helpers ----------
+
+func truncate(s string, max int) string {
+	if len([]rune(s)) <= max {
+		return s
+	}
+	return string([]rune(s)[:max]) + "…"
 }
 
 // ---------- embeds ----------
