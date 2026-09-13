@@ -31,18 +31,16 @@ const maxSteps = 5
 const stepperCancelPrefix = "stepper_cancel_"
 
 func StepperDefinition() *discordgo.ApplicationCommand {
+	// NOTE : Discord rejette la commande (50035) si une option obligatoire
+	// suit une option facultative. Donc : d'abord TOUTES les obligatoires
+	// (titre, question1, choix1), puis les facultatives (dont duree_minutes
+	// en dernier).
 	opts := []*discordgo.ApplicationCommandOption{
 		{
 			Type:        discordgo.ApplicationCommandOptionString,
 			Name:        "titre",
 			Description: "Titre du vote en plusieurs étapes",
 			Required:    true,
-		},
-		{
-			Type:        discordgo.ApplicationCommandOptionInteger,
-			Name:        "duree_minutes",
-			Description: "Durée de chaque étape (défaut 60, max 1440)",
-			Required:    false,
 		},
 		{
 			Type:        discordgo.ApplicationCommandOptionString,
@@ -82,7 +80,12 @@ func StepperDefinition() *discordgo.ApplicationCommand {
 	return &discordgo.ApplicationCommand{
 		Name:        "sondage_stepper",
 		Description: "Enchaîne plusieurs votes Condorcet étape par étape (avec conditions)",
-		Options:     opts,
+		Options: append(opts, &discordgo.ApplicationCommandOption{
+			Type:        discordgo.ApplicationCommandOptionInteger,
+			Name:        "duree_minutes",
+			Description: "Durée de chaque étape (défaut 60, max 1440)",
+			Required:    false,
+		}),
 	}
 }
 
