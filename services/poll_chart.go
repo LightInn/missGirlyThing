@@ -18,15 +18,15 @@ func RenderPollChart(res *PollResult) ([]byte, error) {
 	}
 
 	const (
-		W       = 760
-		pad     = 28
-		headH   = 64
-		rowH    = 62
-		rowGap  = 14
-		footH   = 44
-		barH    = 26
-		barX    = 150
-		scale   = 3
+		W      = 760
+		pad    = 28
+		headH  = 64
+		rowH   = 62
+		rowGap = 14
+		footH  = 44
+		barH   = 26
+		barX   = 150
+		scale  = 3
 	)
 	n := len(res.Options)
 	H := headH + n*(rowH+rowGap) + footH

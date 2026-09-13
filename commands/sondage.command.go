@@ -471,7 +471,7 @@ func (c *SondageCommand) pollEmbed(poll *services.Poll) *discordgo.MessageEmbed 
 			{Name: "🙈 Votes", Value: fmt.Sprintf("**%d** vote(s)", poll.VoterCount()), Inline: true},
 			{Name: "⚖️ Méthode", Value: "Condorcet + Copeland", Inline: true},
 		},
-		Footer: &discordgo.MessageEmbedFooter{Text: footer},
+		Footer:    &discordgo.MessageEmbedFooter{Text: footer},
 		Timestamp: poll.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 }
