@@ -110,7 +110,7 @@ func (c *StepperCommand) HandleSlash(s *discordgo.Session, i *discordgo.Interact
 	}
 	str := func(name string) string {
 		if o, ok := raw[name]; ok {
-			return strings.TrimSpace(o.StringValue())
+			return unquote(o.StringValue())
 		}
 		return ""
 	}
@@ -137,7 +137,7 @@ func (c *StepperCommand) HandleSlash(s *discordgo.Session, i *discordgo.Interact
 		q := str(fmt.Sprintf("question%d", step))
 		ch := ""
 		if o, ok := raw[fmt.Sprintf("choix%d", step)]; ok {
-			ch = strings.TrimSpace(o.StringValue())
+			ch = unquote(o.StringValue())
 		}
 		si := str(fmt.Sprintf("si%d", step))
 		kind := str(fmt.Sprintf("type%d", step))
@@ -245,7 +245,7 @@ func parseStepCond(raw string, step int) (services.StepCondition, string) {
 	if digits == "" || err != nil || n < 1 || n >= step {
 		return services.StepCondition{}, fmt.Sprintf("la condition doit référencer une étape précédente (1 à %d).", step-1)
 	}
-	val := strings.TrimSpace(parts[1])
+	val := unquote(parts[1])
 	if val == "" {
 		return services.StepCondition{}, "condition invalide : option gagnante vide (ex : 2=Minecraft)."
 	}

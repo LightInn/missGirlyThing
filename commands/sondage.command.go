@@ -66,14 +66,29 @@ func SondageDefinition() *discordgo.ApplicationCommand {
 }
 
 const (
-	maxOptions     = 5
-	minOptions     = 2
-	modalPrefix    = "sondage_vote_"
-	btnVotePrefix  = "sondage_voter_"
-	btnLeavePrefix = "sondage_retirer_"
-	btnResPrefix   = "sondage_resultats_"
-	btnClosePrefix = "sondage_cloturer_"
+	maxOptions      = 5
+	minOptions      = 2
+	modalPrefix     = "sondage_vote_"
+	btnVotePrefix   = "sondage_voter_"
+	btnLeavePrefix  = "sondage_retirer_"
+	btnResPrefix    = "sondage_resultats_"
+	btnClosePrefix  = "sondage_cloturer_"
 )
+
+// unquote retire les guillemets entourants que certains clients Discord
+// gardent littéralement quand on tape option:"valeur avec espaces".
+// Sans ça, "Minecraft ; Enshrouded" donne l'option `"Minecraft` et
+// si4 "2=Minecraft" ne matche plus jamais le gagnant.
+func unquote(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) >= 2 {
+		first, last := s[0], s[len(s)-1]
+		if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+			return strings.TrimSpace(s[1 : len(s)-1])
+		}
+	}
+	return s
+}
 
 // openEmbed choisit l'embed d'ouverture selon le type (notes aveugles ou appel).
 func (c *SondageCommand) openEmbed(poll *services.Poll) *discordgo.MessageEmbed {
@@ -94,7 +109,7 @@ func (c *SondageCommand) HandleSlash(s *discordgo.Session, i *discordgo.Interact
 	}
 	strOpt := func(name string) string {
 		if o, ok := opts[name]; ok {
-			return strings.TrimSpace(o.StringValue())
+			return unquote(o.StringValue())
 		}
 		return ""
 	}
@@ -214,7 +229,7 @@ func parseChoices(raw string) ([]string, string) {
 	parts := strings.Split(raw, sep)
 	options := []string{}
 	for _, p := range parts {
-		t := strings.TrimSpace(p)
+		t := unquote(p)
 		if t == "" {
 			continue
 		}
