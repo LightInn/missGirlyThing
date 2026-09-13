@@ -117,7 +117,6 @@ func (p *Poll) AddVote(userID, username string, scores []int) error {
 			return fmt.Errorf("les notes doivent être entre 0 et 10")
 		}
 	}
-	defer p.mu.Unlock()
 	cp := make([]int, len(scores))
 	copy(cp, scores)
 	p.Votes[userID] = cp
