@@ -139,3 +139,131 @@ func TestStepperCancelStopsAdvance(t *testing.T) {
 		t.Fatalf("après annulation: next=%v finished=%v, want (nil,false)", next, finished)
 	}
 }
+
+func TestDispoJoinLeave(t *testing.T) {
+	svc := NewPollService()
+	p := svc.CreatePoll("Qui est dispo ?", nil, "a", "c", 0)
+	p.IsDispo = true
+	added, err := p.Join("u1", "alice")
+	if err != nil || !added {
+		t.Fatalf("join: added=%v err=%v", added, err)
+	}
+	if added, _ := p.Join("u1", "alice"); added {
+		t.Fatal("double join compté deux fois")
+	}
+	if _, err := p.Join("u2", "bob"); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.ParticipantCount(); got != 2 {
+		t.Fatalf("participants = %d, want 2", got)
+	}
+	ids := p.ParticipantIDs()
+	if len(ids) != 2 || ids[0] != "u1" || ids[1] != "u2" {
+		t.Fatalf("ordre stable attendu [u1 u2] (alice, bob), got %v", ids)
+	}
+	removed, err := p.Leave("u1")
+	if err != nil || !removed {
+		t.Fatalf("leave: removed=%v err=%v", removed, err)
+	}
+	if removed, _ := p.Leave("u1"); removed {
+		t.Fatal("leave d'un absent")
+	}
+	_, _, _ = svc.CloseOnce(p.ID)
+	if _, err := p.Join("u3", "zoe"); err == nil {
+		t.Fatal("join après clôture accepté")
+	}
+}
+
+func TestCondMetLenient(t *testing.T) {
+	polls := NewPollService()
+	svc := NewStepperService(polls)
+	newStepper := func() *Stepper {
+		return svc.CreateStepper("T", "a", "c", time.Minute, []StepDef{
+			{Question: "Q1", Options: []string{"Oui", "Non"}},
+			{Question: "Jeu ?", Options: []string{"Minecraft", "Enshrouded"}},
+			{Question: "Suite ?", Options: []string{"X", "Y"}},
+		})
+	}
+	voteClose := func(st *Stepper, idx int, scores []int) {
+		if err := st.Steps[idx].AddVote("u1", "x", scores); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, ok := polls.CloseOnce(st.Steps[idx].ID); !ok {
+			t.Fatal("clôture refusée")
+		}
+	}
+
+	st := newStepper()
+	voteClose(st, 1, []int{9, 1})
+	for _, want := range []string{"Minecraft", "minecraft", "MINECRAFT", "Mine", "minec"} {
+		ok, reason := svc.CondMet(st, StepDef{Cond: StepCondition{HasCond: true, CondStep: 1, CondValue: want}})
+		if !ok {
+			t.Errorf("%q aurait dû matcher Minecraft (%s)", want, reason)
+		}
+	}
+	for _, want := range []string{"Enshrouded", "Minecrafx", "M", "2"} {
+		ok, _ := svc.CondMet(st, StepDef{Cond: StepCondition{HasCond: true, CondStep: 1, CondValue: want}})
+		if ok {
+			t.Errorf("%q aurait dû être refusé", want)
+		}
+	}
+	// Numéro d'option : la gagnante est la n°1.
+	if ok, _ := svc.CondMet(st, StepDef{Cond: StepCondition{HasCond: true, CondStep: 1, CondValue: "1"}}); !ok {
+		t.Error("2=1 aurait dû matcher (Minecraft n°1)")
+	}
+}
+
+func TestCondMetAmbiguousPrefixRefused(t *testing.T) {
+	polls := NewPollService()
+	svc := NewStepperService(polls)
+	st := svc.CreateStepper("T", "a", "c", time.Minute, []StepDef{
+		{Question: "Q1", Options: []string{"Oui", "Non"}},
+		{Question: "Jeu ?", Options: []string{"Minecraft", "Mineur"}},
+	})
+	_ = st.Steps[1].AddVote("u1", "x", []int{9, 1})
+	_, _, _ = polls.CloseOnce(st.Steps[1].ID)
+	ok, _ := svc.CondMet(st, StepDef{Cond: StepCondition{HasCond: true, CondStep: 1, CondValue: "Min"}})
+	if ok {
+		t.Error("préfixe ambigu accepté")
+	}
+	ok, _ = svc.CondMet(st, StepDef{Cond: StepCondition{HasCond: true, CondStep: 1, CondValue: "Minecraft"}})
+	if !ok {
+		t.Error("match exact refusé")
+	}
+}
+
+func TestCondMetDispoRefSkippedWithReason(t *testing.T) {
+	polls := NewPollService()
+	svc := NewStepperService(polls)
+	st := svc.CreateStepper("T", "a", "c", time.Minute, []StepDef{
+		{Question: "Qui est dispo ?", Type: StepTypeDispo},
+		{Question: "Suite ?", Options: []string{"X", "Y"},
+			Cond: StepCondition{HasCond: true, CondStep: 0, CondValue: "X"}},
+	})
+	if !st.Steps[0].IsDispo {
+		t.Fatal("l'étape 1 devrait être dispo")
+	}
+	_, _, _ = polls.CloseOnce(st.Steps[0].ID)
+	next, finished := svc.Advance(st.ID)
+	if !finished || next != nil {
+		t.Fatalf("fin attendue, got next=%v finished=%v", next, finished)
+	}
+	if !st.Steps[1].IsSkipped() || st.Steps[1].SkippedReason() == "" {
+		t.Fatal("raison du skip manquante")
+	}
+	t.Logf("raison: %s", st.Steps[1].SkippedReason())
+}
+
+func TestAdvanceRunsDispoStep(t *testing.T) {
+	polls := NewPollService()
+	svc := NewStepperService(polls)
+	st := svc.CreateStepper("T", "a", "c", time.Minute, []StepDef{
+		{Question: "Qui est dispo ?", Type: StepTypeDispo},
+		{Question: "Jeu ?", Options: []string{"Minecraft", "Enshrouded"}},
+	})
+	_, _, _ = polls.CloseOnce(st.Steps[0].ID)
+	next, finished := svc.Advance(st.ID)
+	if finished || next != st.Steps[1] {
+		t.Fatalf("l'étape dispo clôturée doit enchaîner, got next=%v finished=%v", next, finished)
+	}
+}

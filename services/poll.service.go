@@ -9,31 +9,43 @@ import (
 	"time"
 )
 
-// Poll est un sondage au scrutin de Condorcet par notation.
-// Chaque votant attribue une note 0-10 à chaque option (vote aveugle :
-// les notes des autres ne sont jamais révélées avant la clôture).
+// Types de sondage / d'étape.
+const (
+	StepTypeCondorcet = "condorcet" // vote aveugle par notes 0-10 + Condorcet/Copeland
+	StepTypeDispo     = "dispo"     // appel : qui est dispo ? (roster public, pas de notes)
+)
+
+// Poll est un sondage : soit au scrutin de Condorcet par notation,
+// soit un appel de disponibilités (dispo).
+// Condorcet : chaque votant attribue une note 0-10 à chaque option (vote
+// aveugle : les notes des autres ne sont jamais révélées avant la clôture).
 // Le dépouillement dérive de chaque bulletin des préférences par paire
 // (note A > note B => A bat B chez ce votant), puis applique Copeland.
+// Dispo : chacun se déclare en cliquant (liste publique des présents,
+// les absents sont simplement ceux qui ne cliquent pas).
 type Poll struct {
 	ID        string
 	Question  string
-	Options   []string
+	Options   []string // ignoré pour un appel dispo
 	AuthorID  string
 	ChannelID string
 	MessageID string
 	CreatedAt time.Time
 	ClosesAt  time.Time
 	Closed    bool
+	IsDispo   bool // true = appel de disponibilités (immuable après création)
 
 	mu         sync.RWMutex
-	Votes      map[string][]int  // userID -> notes par option
+	Votes      map[string][]int  // userID -> notes par option (condorcet)
 	VoterNames map[string]string // userID -> pseudo (pour debug/logs, jamais affiché avant clôture)
+	Present    map[string]string // userID -> pseudo (dispo : roster PUBLIC des présents)
 
 	// Champs stepper (vides pour un sondage simple).
-	StepperID string // ID du stepper parent, "" si sondage isolé
-	StepIndex int    // numéro d'étape 1-based (affichage "Étape X/N")
-	StepTotal int    // nombre total d'étapes
-	Skipped   bool   // true si l'étape a été sautée (condition non remplie)
+	StepperID  string // ID du stepper parent, "" si sondage isolé
+	StepIndex  int    // numéro d'étape 1-based (affichage "Étape X/N")
+	StepTotal  int    // nombre total d'étapes
+	Skipped    bool   // true si l'étape a été sautée (condition non remplie)
+	SkipReason string // pourquoi l'étape a été sautée (affiché dans le récap)
 }
 
 // OptionResult est le résultat calculé pour une option.
@@ -86,6 +98,7 @@ func (s *PollService) CreatePoll(question string, options []string, authorID, ch
 		CreatedAt:  time.Now(),
 		Votes:      make(map[string][]int),
 		VoterNames: make(map[string]string),
+		Present:    make(map[string]string),
 	}
 	if duration > 0 {
 		p.ClosesAt = p.CreatedAt.Add(duration)
@@ -148,6 +161,66 @@ func (p *Poll) IsSkipped() bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.Skipped
+}
+
+// SkippedReason pourquoi l'étape a été sautée (affiché dans le récap).
+func (p *Poll) SkippedReason() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.SkipReason
+}
+
+// Join déclare userID présent à un appel dispo. Retourne true si nouveau.
+// Erreur si l'appel est clôturé.
+func (p *Poll) Join(userID, username string) (bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.Closed {
+		return false, fmt.Errorf("appel clôturé")
+	}
+	if _, ok := p.Present[userID]; ok {
+		return false, nil
+	}
+	p.Present[userID] = username
+	return true, nil
+}
+
+// Leave retire userID des présents. Retourne true s'il y était.
+func (p *Poll) Leave(userID string) (bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.Closed {
+		return false, fmt.Errorf("appel clôturé")
+	}
+	if _, ok := p.Present[userID]; !ok {
+		return false, nil
+	}
+	delete(p.Present, userID)
+	return true, nil
+}
+
+// ParticipantCount nombre de présents à un appel dispo.
+func (p *Poll) ParticipantCount() int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return len(p.Present)
+}
+
+// ParticipantIDs userIDs des présents, triés par pseudo (affichage stable).
+func (p *Poll) ParticipantIDs() []string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	ids := make([]string, 0, len(p.Present))
+	for id := range p.Present {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(a, b int) bool {
+		if p.Present[ids[a]] != p.Present[ids[b]] {
+			return p.Present[ids[a]] < p.Present[ids[b]]
+		}
+		return ids[a] < ids[b]
+	})
+	return ids
 }
 
 // Close clôture le sondage et retourne le dépouillement.

@@ -33,7 +33,7 @@ const stepperCancelPrefix = "stepper_cancel_"
 func StepperDefinition() *discordgo.ApplicationCommand {
 	// NOTE : Discord rejette la commande (50035) si une option obligatoire
 	// suit une option facultative. Donc : d'abord TOUTES les obligatoires
-	// (titre, question1, choix1), puis les facultatives (dont duree_minutes
+	// (titre, question1), puis les facultatives (dont duree_minutes
 	// en dernier).
 	opts := []*discordgo.ApplicationCommandOption{
 		{
@@ -51,8 +51,8 @@ func StepperDefinition() *discordgo.ApplicationCommand {
 		{
 			Type:        discordgo.ApplicationCommandOptionString,
 			Name:        "choix1",
-			Description: "Options de l'étape 1 séparées par ;",
-			Required:    true,
+			Description: "Options de l'étape 1 séparées par ; (inutile si type1=dispo)",
+			Required:    false,
 		},
 	}
 	for i := 2; i <= maxSteps; i++ {
@@ -66,7 +66,7 @@ func StepperDefinition() *discordgo.ApplicationCommand {
 			&discordgo.ApplicationCommandOption{
 				Type:        discordgo.ApplicationCommandOptionString,
 				Name:        fmt.Sprintf("choix%d", i),
-				Description: fmt.Sprintf("Options de l'étape %d séparées par ;", i),
+				Description: fmt.Sprintf("Options de l'étape %d séparées par ; (inutile si dispo)", i),
 				Required:    false,
 			},
 			&discordgo.ApplicationCommandOption{
@@ -76,6 +76,18 @@ func StepperDefinition() *discordgo.ApplicationCommand {
 				Required:    false,
 			},
 		)
+	}
+	for i := 1; i <= maxSteps; i++ {
+		opts = append(opts, &discordgo.ApplicationCommandOption{
+			Type:        discordgo.ApplicationCommandOptionString,
+			Name:        fmt.Sprintf("type%d", i),
+			Description: fmt.Sprintf("Type de l'étape %d : condorcet (défaut) ou dispo (appel)", i),
+			Required:    false,
+			Choices: []*discordgo.ApplicationCommandOptionChoice{
+				{Name: "Condorcet (notes 0-10)", Value: services.StepTypeCondorcet},
+				{Name: "Appel : qui est dispo ?", Value: services.StepTypeDispo},
+			},
+		})
 	}
 	return &discordgo.ApplicationCommand{
 		Name:        "sondage_stepper",
@@ -125,12 +137,16 @@ func (c *StepperCommand) HandleSlash(s *discordgo.Session, i *discordgo.Interact
 		q := str(fmt.Sprintf("question%d", step))
 		ch := ""
 		if o, ok := raw[fmt.Sprintf("choix%d", step)]; ok {
-			ch = o.StringValue()
+			ch = strings.TrimSpace(o.StringValue())
 		}
 		si := str(fmt.Sprintf("si%d", step))
+		kind := str(fmt.Sprintf("type%d", step))
+		if kind == "" {
+			kind = services.StepTypeCondorcet
+		}
 		if q == "" {
-			if ch != "" || si != "" {
-				ephemeral(s, i, fmt.Sprintf("❌ L'étape %d a des choix/condition sans question.", step))
+			if ch != "" || si != "" || str(fmt.Sprintf("type%d", step)) != "" {
+				ephemeral(s, i, fmt.Sprintf("❌ L'étape %d a des choix/condition/type sans question.", step))
 				return
 			}
 			continue // étapes suivantes éventuellement définies ? non : on stoppe
@@ -140,12 +156,25 @@ func (c *StepperCommand) HandleSlash(s *discordgo.Session, i *discordgo.Interact
 			ephemeral(s, i, fmt.Sprintf("❌ Les étapes doivent se suivre sans trou (problème à l'étape %d).", step))
 			return
 		}
-		options, errMsg := parseChoices(ch)
-		if errMsg != "" {
-			ephemeral(s, i, fmt.Sprintf("❌ Étape %d : %s", step, errMsg))
+		if kind != services.StepTypeCondorcet && kind != services.StepTypeDispo {
+			ephemeral(s, i, fmt.Sprintf("❌ Étape %d : type inconnu (condorcet ou dispo).", step))
 			return
 		}
-		def := services.StepDef{Question: q, Options: options}
+		def := services.StepDef{Question: q, Type: kind}
+		if kind == services.StepTypeDispo {
+			// Appel : pas d'options, juste un roster (les absents = non-cliqueurs).
+			if ch != "" {
+				ephemeral(s, i, fmt.Sprintf("❌ Étape %d : avec type=dispo, ne renseigne pas de choix.", step))
+				return
+			}
+		} else {
+			options, errMsg := parseChoices(ch)
+			if errMsg != "" {
+				ephemeral(s, i, fmt.Sprintf("❌ Étape %d : %s", step, errMsg))
+				return
+			}
+			def.Options = options
+		}
 		if si != "" {
 			cond, errMsg := parseStepCond(si, step)
 			if errMsg != "" {
@@ -295,7 +324,13 @@ func truncate(s string, max int) string {
 func (c *StepperCommand) introEmbed(st *services.Stepper) *discordgo.MessageEmbed {
 	lines := make([]string, len(st.Defs))
 	for idx, d := range st.Defs {
-		line := fmt.Sprintf("**%d.** %s — _%s_", idx+1, d.Question, strings.Join(d.Options, ", "))
+		icon := "🗳️"
+		suffix := " — _" + strings.Join(d.Options, ", ") + "_"
+		if d.Type == services.StepTypeDispo {
+			icon = "📋"
+			suffix = " — _appel : qui est dispo ?_"
+		}
+		line := fmt.Sprintf("%s **%d.** %s%s", icon, idx+1, d.Question, suffix)
 		if label := services.CondLabel(d); label != "" {
 			line += fmt.Sprintf("\n↳ ⏭️ *%s*", label)
 		}
@@ -321,9 +356,25 @@ func (c *StepperCommand) postRecap(s *discordgo.Session, st *services.Stepper) {
 		name := fmt.Sprintf("Étape %d — %s", idx+1, d.Question)
 		switch {
 		case p.IsSkipped():
+			reason := p.SkippedReason()
+			if reason == "" {
+				reason = "condition non remplie"
+			}
 			fields = append(fields, &discordgo.MessageEmbedField{
-				Name: "⏭️ " + name, Value: "_Ignorée (condition non remplie)._", Inline: false,
+				Name: "⏭️ " + name, Value: "_Ignorée : " + reason + "._", Inline: false,
 			})
+		case p.IsDispo:
+			if n := p.ParticipantCount(); n == 0 {
+				fields = append(fields, &discordgo.MessageEmbedField{
+					Name: "❔ " + name, Value: "_Personne de dispo._", Inline: false,
+				})
+			} else {
+				fields = append(fields, &discordgo.MessageEmbedField{
+					Name:   fmt.Sprintf("📋 %s", name),
+					Value:  rosterLine(p),
+					Inline: false,
+				})
+			}
 		default:
 			res := p.ComputeResult()
 			if res.TotalVoters == 0 {

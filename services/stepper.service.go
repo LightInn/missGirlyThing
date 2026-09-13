@@ -2,6 +2,7 @@ package services
 
 import (
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,7 +21,8 @@ type StepCondition struct {
 
 type StepDef struct {
 	Question string
-	Options  []string
+	Options  []string // ignoré pour un appel dispo
+	Type     string   // StepTypeCondorcet (défaut) ou StepTypeDispo
 	Cond     StepCondition
 }
 
@@ -67,10 +69,15 @@ func (s *StepperService) CreateStepper(title, authorID, channelID string, durati
 		Current:   0,
 	}
 	for i, d := range defs {
+		kind := d.Type
+		if kind == "" {
+			kind = StepTypeCondorcet
+		}
 		p := s.polls.CreatePoll(d.Question, d.Options, authorID, channelID, 0)
 		p.StepperID = st.ID
 		p.StepIndex = i + 1
 		p.StepTotal = len(defs)
+		p.IsDispo = kind == StepTypeDispo
 		st.Steps = append(st.Steps, p)
 	}
 	s.mu.Lock()
@@ -113,11 +120,12 @@ func (s *StepperService) IsDone(st *Stepper) bool {
 	return st.Current >= len(st.Defs)
 }
 
-// SkipStep marque une étape comme sautée (condition non remplie).
-func (s *StepperService) SkipStep(p *Poll) {
+// SkipStep marque une étape comme sautée avec la raison (affichée au récap).
+func (s *StepperService) SkipStep(p *Poll, reason string) {
 	p.mu.Lock()
 	p.Closed = true
 	p.Skipped = true
+	p.SkipReason = reason
 	p.mu.Unlock()
 }
 
@@ -137,11 +145,13 @@ func (s *StepperService) Advance(id string) (next *Poll, finished bool) {
 		return nil, false
 	}
 	for idx := st.Current + 1; idx < len(st.Defs); idx++ {
-		if ok, _ := s.CondMet(st, st.Defs[idx]); ok {
+		ok, reason := s.CondMet(st, st.Defs[idx])
+		if ok {
 			st.Current = idx
 			return st.Steps[idx], false
 		}
-		s.SkipStep(st.Steps[idx])
+		log.Printf("stepper %s: étape %d ignorée (%s)", st.ID, idx+1, reason)
+		s.SkipStep(st.Steps[idx], reason)
 	}
 	st.Current = len(st.Defs)
 	return nil, true
@@ -161,6 +171,9 @@ func (s *StepperService) CondMet(st *Stepper, def StepDef) (bool, string) {
 	if ref.IsSkipped() || !ref.IsClosed() {
 		return false, "l'étape de référence a été ignorée"
 	}
+	if ref.IsDispo {
+		return false, "l'étape de référence est un appel (pas de gagnant Condorcet)"
+	}
 	res := ref.ComputeResult()
 	if res.TotalVoters == 0 {
 		return false, "aucun vote à l'étape de référence"
@@ -177,8 +190,30 @@ func (s *StepperService) CondMet(st *Stepper, def StepDef) (bool, string) {
 	if strings.EqualFold(strings.TrimSpace(top.Name), want) {
 		return true, ""
 	}
+	// Repli : préfixe unique insensible à la casse (ex "Mine" → "Minecraft").
+	// Évite les faux rejets sur une quasi-coquille ; ambiguïté = refusé.
+	if len([]rune(want)) >= 2 {
+		matched := ""
+		ambiguous := false
+		for _, o := range res.Options {
+			if startsFold(o.Name, want) {
+				if matched != "" {
+					ambiguous = true
+					break
+				}
+				matched = o.Name
+			}
+		}
+		if !ambiguous && matched != "" && strings.EqualFold(matched, top.Name) {
+			return true, ""
+		}
+	}
 	return false, fmt.Sprintf("« %s » n'a pas gagné l'étape %d (%s a gagné)",
 		want, def.Cond.CondStep+1, top.Name)
+}
+
+func startsFold(s, prefix string) bool {
+	return strings.HasPrefix(strings.ToLower(s), strings.ToLower(prefix))
 }
 
 // CondLabel décrit la condition pour l'affichage (message d'intro).

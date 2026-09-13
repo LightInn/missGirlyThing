@@ -46,8 +46,8 @@ go run main.go
 - `/ping` - Test bot response
 - `/setgif @user <gif_url>` - Set GIF for user (private, ephemeral)
 - `/ranking` - Show weekly offensive ranking
-- `/sondage question:<texte> choix:<opt1 ; opt2 ; ...> [duree_minutes:<n>]` - Sondage Condorcet par notation (2 à 5 options, vote aveugle 0-10, résultats + graphique PNG, clôture auto/manuelle)
-- `/sondage_stepper titre:<texte> question1:<...> choix1:<...> [question2/choix2/si2 ...]` - Enchaîne jusqu'à 5 votes Condorcet étape par étape (ex : dispo → jeu → timing → `si4: 2=Minecraft` pour skyblock/modpack), avec récap final et bouton d'annulation
+- `/sondage question:<texte> [choix:<opt1 ; opt2 ; ...>] [type:<condorcet|dispo>] [duree_minutes:<n>]` - Sondage Condorcet par notation (2 à 5 options, vote aveugle 0-10, résultats + graphique PNG, clôture auto/manuelle) ou appel de disponibilités (roster public, les absents sont ceux qui ne cliquent pas)
+- `/sondage_stepper titre:<texte> question1:<...> [choix1:<...>] [type1:<...>] [question2/choix2/type2/si2 ...]` - Enchaîne jusqu'à 5 étapes (condorcet ou dispo, ex : `type1: dispo` pour « Qui est dispo ? » avec la liste des présents), conditions `siN: 2=Minecraft`, récap final et bouton d'annulation
 
 ## Discord Setup
 

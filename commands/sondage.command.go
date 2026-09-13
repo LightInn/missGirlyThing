@@ -31,7 +31,7 @@ func NewSondageCommand(polls *services.PollService) *SondageCommand {
 func SondageDefinition() *discordgo.ApplicationCommand {
 	return &discordgo.ApplicationCommand{
 		Name:        "sondage",
-		Description: "Lance un sondage Condorcet (vote aveugle par notes 0-10 + graphique)",
+		Description: "Sondage Condorcet aveugle (notes 0-10) ou appel de disponibilités",
 		Options: []*discordgo.ApplicationCommandOption{
 			{
 				Type:        discordgo.ApplicationCommandOptionString,
@@ -42,8 +42,18 @@ func SondageDefinition() *discordgo.ApplicationCommand {
 			{
 				Type:        discordgo.ApplicationCommandOptionString,
 				Name:        "choix",
-				Description: "Options séparées par ;  (2 à 5, ex: Dune ; Oppenheimer ; Barbie)",
-				Required:    true,
+				Description: "Options séparées par ; (requis sauf pour un appel)",
+				Required:    false,
+			},
+			{
+				Type:        discordgo.ApplicationCommandOptionString,
+				Name:        "type",
+				Description: "condorcet (défaut) ou dispo (appel : qui est dispo ?)",
+				Required:    false,
+				Choices: []*discordgo.ApplicationCommandOptionChoice{
+					{Name: "Condorcet (notes 0-10)", Value: services.StepTypeCondorcet},
+					{Name: "Appel : qui est dispo ?", Value: services.StepTypeDispo},
+				},
 			},
 			{
 				Type:        discordgo.ApplicationCommandOptionInteger,
@@ -60,9 +70,18 @@ const (
 	minOptions     = 2
 	modalPrefix    = "sondage_vote_"
 	btnVotePrefix  = "sondage_voter_"
+	btnLeavePrefix = "sondage_retirer_"
 	btnResPrefix   = "sondage_resultats_"
 	btnClosePrefix = "sondage_cloturer_"
 )
+
+// openEmbed choisit l'embed d'ouverture selon le type (notes aveugles ou appel).
+func (c *SondageCommand) openEmbed(poll *services.Poll) *discordgo.MessageEmbed {
+	if poll.IsDispo {
+		return c.dispoEmbed(poll)
+	}
+	return c.pollEmbed(poll)
+}
 
 var optionDots = []string{"🟥", "🟧", "🟨", "🟩", "🟦"}
 
@@ -73,8 +92,22 @@ func (c *SondageCommand) HandleSlash(s *discordgo.Session, i *discordgo.Interact
 	for _, o := range i.ApplicationCommandData().Options {
 		opts[o.Name] = o
 	}
-	question := strings.TrimSpace(opts["question"].StringValue())
-	choixRaw := opts["choix"].StringValue()
+	strOpt := func(name string) string {
+		if o, ok := opts[name]; ok {
+			return strings.TrimSpace(o.StringValue())
+		}
+		return ""
+	}
+	question := strOpt("question")
+	choixRaw := strOpt("choix")
+	kind := strOpt("type")
+	if kind == "" {
+		kind = services.StepTypeCondorcet
+	}
+	if kind != services.StepTypeCondorcet && kind != services.StepTypeDispo {
+		ephemeral(s, i, "❌ Type inconnu (condorcet ou dispo).")
+		return
+	}
 	duree := int64(60)
 	if o, ok := opts["duree_minutes"]; ok {
 		duree = o.IntValue()
@@ -86,25 +119,36 @@ func (c *SondageCommand) HandleSlash(s *discordgo.Session, i *discordgo.Interact
 		duree = 1440
 	}
 
-	options, errMsg := parseChoices(choixRaw)
-	if errMsg != "" {
-		ephemeral(s, i, "❌ "+errMsg)
-		return
-	}
 	if strings.TrimSpace(question) == "" {
 		ephemeral(s, i, "❌ La question ne peut pas être vide.")
 		return
 	}
 
 	authorID := interactionAuthorID(i)
-	poll := c.polls.CreatePoll(question, options, authorID, i.ChannelID, time.Duration(duree)*time.Minute)
+	var poll *services.Poll
+	if kind == services.StepTypeDispo {
+		// Appel de disponibilités : pas d'options, juste un roster.
+		if choixRaw != "" {
+			ephemeral(s, i, "❌ Avec type=dispo, ne renseigne pas de choix (clique juste ✅).")
+			return
+		}
+		poll = c.polls.CreatePoll(question, nil, authorID, i.ChannelID, time.Duration(duree)*time.Minute)
+		poll.IsDispo = true
+	} else {
+		options, errMsg := parseChoices(choixRaw)
+		if errMsg != "" {
+			ephemeral(s, i, "❌ "+errMsg)
+			return
+		}
+		poll = c.polls.CreatePoll(question, options, authorID, i.ChannelID, time.Duration(duree)*time.Minute)
+	}
 
-	embed := c.pollEmbed(poll)
+	embed := c.openEmbed(poll)
 	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
 			Embeds:     []*discordgo.MessageEmbed{embed},
-			Components: c.pollComponents(poll.ID),
+			Components: c.pollComponents(poll),
 		},
 	}); err != nil {
 		log.Printf("sondage: erreur réponse interaction: %v", err)
@@ -132,8 +176,8 @@ func (c *SondageCommand) PostPollMessage(s *discordgo.Session, channelID string,
 		poll.ClosesAt = time.Now().Add(duration)
 	}
 	msg, err := s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
-		Embeds:     []*discordgo.MessageEmbed{c.pollEmbed(poll)},
-		Components: c.pollComponents(poll.ID),
+		Embeds:     []*discordgo.MessageEmbed{c.openEmbed(poll)},
+		Components: c.pollComponents(poll),
 	})
 	if err != nil {
 		return err
@@ -206,6 +250,8 @@ func (c *SondageCommand) HandleComponent(s *discordgo.Session, i *discordgo.Inte
 	switch {
 	case strings.HasPrefix(customID, btnVotePrefix):
 		pollID, kind = strings.TrimPrefix(customID, btnVotePrefix), "vote"
+	case strings.HasPrefix(customID, btnLeavePrefix):
+		pollID, kind = strings.TrimPrefix(customID, btnLeavePrefix), "retirer"
 	case strings.HasPrefix(customID, btnResPrefix):
 		pollID, kind = strings.TrimPrefix(customID, btnResPrefix), "resultats"
 	case strings.HasPrefix(customID, btnClosePrefix):
@@ -222,13 +268,56 @@ func (c *SondageCommand) HandleComponent(s *discordgo.Session, i *discordgo.Inte
 
 	switch kind {
 	case "vote":
-		c.openVoteModal(s, i, poll)
+		if poll.IsDispo {
+			c.joinDispo(s, i, poll)
+		} else {
+			c.openVoteModal(s, i, poll)
+		}
+	case "retirer":
+		c.leaveDispo(s, i, poll)
 	case "resultats":
 		c.handleResultats(s, i, poll)
 	case "cloturer":
 		c.handleCloturer(s, i, poll)
 	}
 	return true
+}
+
+// joinDispo déclare le votant présent à un appel (roster public).
+func (c *SondageCommand) joinDispo(s *discordgo.Session, i *discordgo.InteractionCreate, poll *services.Poll) {
+	if poll.IsClosed() {
+		ephemeral(s, i, "🔒 Cet appel est clôturé.")
+		return
+	}
+	added, err := poll.Join(interactionAuthorID(i), interactionAuthorName(s, i))
+	if err != nil {
+		ephemeral(s, i, "🔒 Cet appel est clôturé.")
+		return
+	}
+	if !added {
+		ephemeral(s, i, "✅ Tu es déjà noté dispo ! (bouton ❌ pour te retirer)")
+	} else {
+		ephemeral(s, i, fmt.Sprintf("✅ Noté dispo ! **%d** présent(s) pour l'instant.", poll.ParticipantCount()))
+	}
+	c.refreshDispoMessage(s, poll)
+}
+
+// leaveDispo retire le votant des présents.
+func (c *SondageCommand) leaveDispo(s *discordgo.Session, i *discordgo.InteractionCreate, poll *services.Poll) {
+	if !poll.IsDispo {
+		return
+	}
+	removed, err := poll.Leave(interactionAuthorID(i))
+	if err != nil {
+		ephemeral(s, i, "🔒 Cet appel est clôturé.")
+		return
+	}
+	if !removed {
+		ephemeral(s, i, "ℹ️ Tu n'étais pas noté dispo.")
+	} else {
+		ephemeral(s, i, "❌ Retiré de la liste. À la prochaine !")
+	}
+	c.refreshDispoMessage(s, poll)
 }
 
 func (c *SondageCommand) openVoteModal(s *discordgo.Session, i *discordgo.InteractionCreate, poll *services.Poll) {
@@ -270,6 +359,10 @@ func (c *SondageCommand) openVoteModal(s *discordgo.Session, i *discordgo.Intera
 }
 
 func (c *SondageCommand) handleResultats(s *discordgo.Session, i *discordgo.InteractionCreate, poll *services.Poll) {
+	if poll.IsDispo {
+		ephemeral(s, i, "📋 "+rosterLine(poll))
+		return
+	}
 	if !poll.IsClosed() {
 		ephemeral(s, i, fmt.Sprintf("🙈 Vote aveugle en cours : **%d** vote(s). Les résultats restent cachés jusqu'à la clôture.", poll.VoterCount()))
 		return
@@ -308,6 +401,10 @@ func (c *SondageCommand) HandleModal(s *discordgo.Session, i *discordgo.Interact
 	}
 	if poll.IsClosed() {
 		ephemeral(s, i, "🔒 Trop tard, le sondage vient d'être clôturé.")
+		return true
+	}
+	if poll.IsDispo {
+		ephemeral(s, i, "ℹ️ Pas de notes pour un appel : clique sur ✅ pour te déclarer dispo.")
 		return true
 	}
 
@@ -372,6 +469,26 @@ func (c *SondageCommand) closeAndPublish(s *discordgo.Session, pollID, closerID 
 	if poll == nil || res == nil {
 		return
 	}
+
+	// Appel dispo : pas de Condorcet ni de graphique, juste le roster final.
+	if poll.IsDispo {
+		embed := c.dispoResultEmbed(poll, closerID, auto)
+		if poll.MessageID != "" {
+			_, _ = s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+				ID:         poll.MessageID,
+				Channel:    poll.ChannelID,
+				Embeds:     &[]*discordgo.MessageEmbed{embed},
+				Components: &[]discordgo.MessageComponent{},
+			})
+		} else {
+			_, _ = s.ChannelMessageSendEmbed(poll.ChannelID, embed)
+		}
+		if c.OnStepClosed != nil && poll.StepperID != "" {
+			c.OnStepClosed(s, poll)
+		}
+		return
+	}
+
 	embed := c.resultEmbed(poll, res, closerID, auto)
 
 	chart, err := services.RenderPollChart(res)
@@ -425,28 +542,103 @@ func (c *SondageCommand) refreshPollMessage(s *discordgo.Session, poll *services
 	if poll.MessageID == "" || poll.IsClosed() {
 		return
 	}
-	embed := c.pollEmbed(poll)
+	embed := c.openEmbed(poll)
 	_, _ = s.ChannelMessageEditComplex(&discordgo.MessageEdit{
 		ID:         poll.MessageID,
 		Channel:    poll.ChannelID,
 		Embeds:     &[]*discordgo.MessageEmbed{embed},
-		Components: &[]discordgo.MessageComponent{discordgo.ActionsRow{Components: c.pollButtons(poll.ID)}},
+		Components: &[]discordgo.MessageComponent{discordgo.ActionsRow{Components: c.pollButtons(poll)}},
+	})
+}
+
+// refreshDispoMessage met à jour le roster public après chaque ✅/❌.
+func (c *SondageCommand) refreshDispoMessage(s *discordgo.Session, poll *services.Poll) {
+	if poll.MessageID == "" || poll.IsClosed() {
+		return
+	}
+	embed := c.dispoEmbed(poll)
+	_, _ = s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+		ID:         poll.MessageID,
+		Channel:    poll.ChannelID,
+		Embeds:     &[]*discordgo.MessageEmbed{embed},
+		Components: &[]discordgo.MessageComponent{discordgo.ActionsRow{Components: c.pollButtons(poll)}},
 	})
 }
 
 // ---------- embeds ----------
 
-func (c *SondageCommand) pollComponents(pollID string) []discordgo.MessageComponent {
+func (c *SondageCommand) pollComponents(poll *services.Poll) []discordgo.MessageComponent {
 	return []discordgo.MessageComponent{
-		discordgo.ActionsRow{Components: c.pollButtons(pollID)},
+		discordgo.ActionsRow{Components: c.pollButtons(poll)},
 	}
 }
 
-func (c *SondageCommand) pollButtons(pollID string) []discordgo.MessageComponent {
+func (c *SondageCommand) pollButtons(poll *services.Poll) []discordgo.MessageComponent {
+	if poll.IsDispo {
+		return []discordgo.MessageComponent{
+			discordgo.Button{Label: "Je suis dispo !", Style: discordgo.SuccessButton, Emoji: &discordgo.ComponentEmoji{Name: "✅"}, CustomID: btnVotePrefix + poll.ID},
+			discordgo.Button{Label: "Me retirer", Style: discordgo.SecondaryButton, Emoji: &discordgo.ComponentEmoji{Name: "❌"}, CustomID: btnLeavePrefix + poll.ID},
+			discordgo.Button{Label: "Clôturer", Style: discordgo.DangerButton, Emoji: &discordgo.ComponentEmoji{Name: "🔒"}, CustomID: btnClosePrefix + poll.ID},
+		}
+	}
 	return []discordgo.MessageComponent{
-		discordgo.Button{Label: "Voter", Style: discordgo.PrimaryButton, Emoji: &discordgo.ComponentEmoji{Name: "🗳️"}, CustomID: btnVotePrefix + pollID},
-		discordgo.Button{Label: "Résultats", Style: discordgo.SecondaryButton, Emoji: &discordgo.ComponentEmoji{Name: "📊"}, CustomID: btnResPrefix + pollID},
-		discordgo.Button{Label: "Clôturer", Style: discordgo.DangerButton, Emoji: &discordgo.ComponentEmoji{Name: "🔒"}, CustomID: btnClosePrefix + pollID},
+		discordgo.Button{Label: "Voter", Style: discordgo.PrimaryButton, Emoji: &discordgo.ComponentEmoji{Name: "🗳️"}, CustomID: btnVotePrefix + poll.ID},
+		discordgo.Button{Label: "Résultats", Style: discordgo.SecondaryButton, Emoji: &discordgo.ComponentEmoji{Name: "📊"}, CustomID: btnResPrefix + poll.ID},
+		discordgo.Button{Label: "Clôturer", Style: discordgo.DangerButton, Emoji: &discordgo.ComponentEmoji{Name: "🔒"}, CustomID: btnClosePrefix + poll.ID},
+	}
+}
+
+// rosterLine résume les présents : "3 dispo(s) : @a, @b, @c" ou "personne pour l'instant".
+func rosterLine(poll *services.Poll) string {
+	ids := poll.ParticipantIDs()
+	if len(ids) == 0 {
+		return "_Personne pour l'instant — clique sur ✅ !_"
+	}
+	mentions := make([]string, len(ids))
+	for k, id := range ids {
+		mentions[k] = "<@" + id + ">"
+	}
+	return fmt.Sprintf("**%d** dispo(s) : %s", len(ids), strings.Join(mentions, ", "))
+}
+
+func dispoTitle(poll *services.Poll) string {
+	if poll.StepperID != "" && poll.StepTotal > 0 {
+		return fmt.Sprintf("📋 Étape %d/%d — %s", poll.StepIndex, poll.StepTotal, poll.Question)
+	}
+	return "📋 " + poll.Question
+}
+
+func (c *SondageCommand) dispoEmbed(poll *services.Poll) *discordgo.MessageEmbed {
+	footer := "Qui vient ? Clique sur ✅ (liste publique — les absents sont ceux qui ne cliquent pas)."
+	if !poll.ClosesAt.IsZero() {
+		footer += fmt.Sprintf(" Clôture auto <t:%d:R>.", poll.ClosesAt.Unix())
+	}
+	return &discordgo.MessageEmbed{
+		Title:       dispoTitle(poll),
+		Description: rosterLine(poll),
+		Color:       0x57F287,
+		Fields: []*discordgo.MessageEmbedField{
+			{Name: "📋 Présents", Value: fmt.Sprintf("**%d**", poll.ParticipantCount()), Inline: true},
+			{Name: "ℹ️ Type", Value: "Appel (pas de notes)", Inline: true},
+		},
+		Footer:    &discordgo.MessageEmbedFooter{Text: footer},
+		Timestamp: poll.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+	}
+}
+
+func (c *SondageCommand) dispoResultEmbed(poll *services.Poll, closerID string, auto bool) *discordgo.MessageEmbed {
+	footer := "Appel clôturé — les absents sont ceux qui ne se sont pas déclarés."
+	if auto {
+		footer += " Clôture automatique."
+	} else if closerID != "" {
+		footer += fmt.Sprintf(" Clôturé par <@%s>.", closerID)
+	}
+	return &discordgo.MessageEmbed{
+		Title:       dispoTitle(poll) + " — terminé",
+		Description: "🏁 " + rosterLine(poll),
+		Color:       0xFACD50,
+		Footer:      &discordgo.MessageEmbedFooter{Text: footer},
+		Timestamp:   time.Now().Format("2006-01-02T15:04:05Z07:00"),
 	}
 }
 
