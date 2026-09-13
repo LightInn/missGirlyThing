@@ -66,13 +66,13 @@ func SondageDefinition() *discordgo.ApplicationCommand {
 }
 
 const (
-	maxOptions      = 5
-	minOptions      = 2
-	modalPrefix     = "sondage_vote_"
-	btnVotePrefix   = "sondage_voter_"
-	btnLeavePrefix  = "sondage_retirer_"
-	btnResPrefix    = "sondage_resultats_"
-	btnClosePrefix  = "sondage_cloturer_"
+	maxOptions     = 5
+	minOptions     = 2
+	modalPrefix    = "sondage_vote_"
+	btnVotePrefix  = "sondage_voter_"
+	btnLeavePrefix = "sondage_retirer_"
+	btnResPrefix   = "sondage_resultats_"
+	btnClosePrefix = "sondage_cloturer_"
 )
 
 // unquote retire les guillemets entourants que certains clients Discord
